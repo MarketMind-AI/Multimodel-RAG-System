@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "llama-opt"
+version = "0.1.0"
+description = ""
+authors = [""]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "^0.110.3"
+uvicorn = "^0.29.0"
+pydantic = "^2.7.1"
+pydantic-settings = "^2.2.1"
+langchain = "^0.1.17"
+langchain-core = "^0.1.48"
+nltk = "^3.8.1"
+pandas = "^2.2.2"
+langchain-community = "^0.0.36"
+sentence-transformers = "^2.7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -1,0 +1,52 @@
+# Optimized multi-stage Dockerfile for Bytewax pipeline
+FROM python:3.10-slim AS base
+
+# Set environment variables
+ENV WORKSPACE_ROOT=/usr/src/app \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    POETRY_HOME="/opt/poetry" \
+    POETRY_NO_INTERACTION=1 \
+    PATH="/opt/poetry/bin:$PATH" \
+    PYTHONPATH=/usr/src/app
+
+# Install system dependencies in a single layer
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    python3-dev \
+    curl \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Poetry
+RUN curl -sSL https://install.python-poetry.org | python - \
+    && apt-get remove -y curl
+
+# Set working directory
+WORKDIR $WORKSPACE_ROOT
+
+# Copy only dependency files first for better caching
+COPY ../3-feature-pipeline/pyproject.toml ../3-feature-pipeline/poetry.lock* ./
+
+# Install Python dependencies
+RUN poetry config virtualenvs.create false \
+    && poetry install --no-root --no-interaction
+
+# Install additional packages
+RUN pip install --no-cache-dir \
+    open-clip-torch \
+    torch \
+    torchvision
+
+# Copy project files
+COPY ../3-feature-pipeline .
+COPY ../core ./core
+
+# Make entrypoint script executable
+RUN chmod +x /usr/src/app/scripts/bytewax_entrypoint.sh
+
+# Final command
+CMD ["/usr/src/app/scripts/bytewax_entrypoint.sh"]

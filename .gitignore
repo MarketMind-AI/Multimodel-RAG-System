@@ -1,0 +1,5 @@
+# Exclude the virtual environment directory created by Poetry
+.venv/
+
+# Exclude the Poetry lock file if you don't want to commit it
+poetry.lock

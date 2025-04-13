@@ -1,0 +1,23 @@
+# Use the official Python image with version 3.10
+FROM python:3.10-slim AS base
+
+# Set working directory
+WORKDIR /app
+
+# Install Poetry
+RUN pip install --no-cache-dir poetry
+
+# Copy dependency files
+COPY ../etl-backend/pyproject.toml ../etl-backend/poetry.lock* /app/
+
+# Install dependencies
+RUN poetry install --only main --no-root
+
+# Copy the application code from the backend directory
+COPY ../etl-backend /app
+
+# Expose the port FastAPI is running on
+EXPOSE 8080
+
+# Start the FastAPI app
+CMD ["poetry", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

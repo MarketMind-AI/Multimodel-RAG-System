@@ -1,0 +1,166 @@
+version: '3.8'
+
+services:
+  mongo1:
+    image: mongo:5
+    container_name: mongo1
+    command: ["--replSet", "my-replica-set", "--bind_ip_all", "--port", "30001"]
+    volumes:
+      - mongo-replica-1-data:/data/db
+    ports:
+      - "30001:30001"
+    healthcheck:
+      test: >
+        test $$(echo 'rs.initiate({_id:"my-replica-set",members:[{_id:0,host:"mongo1:30001"},{_id:1,host:"mongo2:30002"},{_id:2,host:"mongo3:30003"}]}).ok || rs.status().ok' | mongo --port 30001 --quiet) -eq 1
+      interval: 10s
+      start_period: 30s
+    restart: always
+
+  mongo2:
+    image: mongo:5
+    container_name: mongo2
+    command: ["--replSet", "my-replica-set", "--bind_ip_all", "--port", "30002"]
+    volumes:
+      - mongo-replica-2-data:/data/db
+    ports:
+      - "30002:30002"
+    restart: always
+
+  mongo3:
+    image: mongo:5
+    container_name: mongo3
+    command: ["--replSet", "my-replica-set", "--bind_ip_all", "--port", "30003"]
+    volumes:
+      - mongo-replica-3-data:/data/db
+    ports:
+      - "30003:30003"
+    restart: always
+
+  mq:
+    image: rabbitmq:3-management-alpine
+    container_name: market-mind-mq
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    volumes:
+      - ./rabbitmq/data/:/var/lib/rabbitmq/
+      - ./rabbitmq/log/:/var/log/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: always
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: market-mind-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    expose:
+      - "6333"
+      - "6334"
+      - "6335"
+    volumes:
+      - qdrant-data:/qdrant_data
+    # Modified health check to be more reliable
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:6333/ || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+
+  etl-backend:
+    image: market-mind_prototype_etl_backend
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile.etl-backend
+    ports:
+      - "8080:8080"
+    depends_on:
+      mongo1:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: on-failure
+
+  frontend:
+    image: market-mind_prototype_frontend
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile.frontend
+    ports:
+      - "8501:8501"
+    restart: on-failure
+
+  cdc:
+    image: "market-mind-cdc"
+    container_name: market-mind-cdc
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile.cdc
+    depends_on:
+      mongo1:
+        condition: service_healthy
+      mq:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: on-failure
+
+  bytewax:
+    image: "market-mind-bytewax"
+    container_name: market-mind-bytewax
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile.bytewax
+    environment:
+      BYTEWAX_PYTHON_FILE_PATH: "main:flow"
+      DEBUG: "false"
+      BYTEWAX_KEEP_CONTAINER_ALIVE: "true"
+    depends_on:
+      mq:
+        condition: service_healthy
+      qdrant:
+        condition: service_started  # Changed to service_started to avoid health check issues
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: on-failure
+
+  inference:
+    image: market-mind_prototype_inference
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile.inference
+    ports:
+      - "8000:8000"
+    depends_on:
+      qdrant:
+        condition: service_started  # Changed to service_started to avoid health check issues
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: on-failure
+
+  ui_service:
+    image: market-mind_prototype_ui_service
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile.ui_service
+    ports:
+      - "8500:8500"
+    depends_on:
+      inference:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: on-failure
+
+volumes:
+  mongo-replica-1-data:
+  mongo-replica-2-data:
+  mongo-replica-3-data:
+  qdrant-data:

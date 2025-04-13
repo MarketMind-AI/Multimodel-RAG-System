@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "backend"
+version = "0.1.0"
+description = ""
+authors = ["mohamedayari1 <ayarim781@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "^0.95.0"
+uvicorn = "^0.22.0"
+pymongo = {extras = ["srv"], version = "^4.8.0"}
+python-dotenv = "^1.0.1"
+loguru = "^0.7.0"
+pymupdf = "^1.19.6"  # Note: this is the PyMuPDF package
+python-multipart = "^0.0.6"
+structlog = "^24.4.0"
+Pillow = "^10.2.0"  # Added for image processing
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
