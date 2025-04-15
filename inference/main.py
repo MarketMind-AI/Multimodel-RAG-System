@@ -28,6 +28,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class MarketingOptions(BaseModel):
+    """Model for marketing content generation options"""
+    enabled: bool = False
+    platform: str = "social media"
+    target_audience: str = "general audience"
+    tone: str = "professional"
+    format: str = "social media post"
+    content_length: str = "medium"
+
 class QueryRequest(BaseModel):
     """Request model for the query endpoint"""
     query: str
@@ -37,6 +46,7 @@ class QueryRequest(BaseModel):
     include_image_data: Optional[bool] = False
     generate_answer: Optional[bool] = False
     use_llava: Optional[bool] = True
+    marketing_options: Optional[MarketingOptions] = None
 
 class QueryResponse(BaseModel):
     """Response model for the query endpoint"""
@@ -45,6 +55,7 @@ class QueryResponse(BaseModel):
     text_results: List[Dict[str, Any]]
     image_results: List[Dict[str, Any]]
     answer: Optional[str] = None
+    marketing_content: Optional[Dict[str, Any]] = None
 
 @app.get("/health")
 async def health_check():
@@ -81,8 +92,27 @@ async def process_query(request: QueryRequest):
         if request.k_images < 0:
             raise HTTPException(status_code=400, detail="k_images must be >= 0")
         
-        logger.info(f"Processing query: '{request.query}' with image query: '{request.image_query}'")
+        # Log request details
+        is_marketing = request.marketing_options is not None and request.marketing_options.enabled
+        logger.info(f"Processing {'marketing' if is_marketing else 'standard'} query: '{request.query}' with image query: '{request.image_query}'")
         logger.info(f"Parameters: k_text={request.k_text}, k_images={request.k_images}, include_image_data={request.include_image_data}")
+        
+        if is_marketing:
+            logger.info(f"Marketing options: platform={request.marketing_options.platform}, "
+                       f"audience={request.marketing_options.target_audience}, "
+                       f"tone={request.marketing_options.tone}, format={request.marketing_options.format}")
+        
+        # Convert marketing options to dictionary if present
+        marketing_options_dict = None
+        if is_marketing:
+            marketing_options_dict = {
+                "enabled": True,
+                "platform": request.marketing_options.platform,
+                "target_audience": request.marketing_options.target_audience,
+                "tone": request.marketing_options.tone,
+                "format": request.marketing_options.format,
+                "content_length": request.marketing_options.content_length
+            }
         
         if request.include_image_data:
             if request.use_llava and request.k_images > 0:
@@ -90,7 +120,8 @@ async def process_query(request: QueryRequest):
                     query=request.query, 
                     image_query=request.image_query,
                     k_text=request.k_text, 
-                    k_images=request.k_images
+                    k_images=request.k_images,
+                    marketing_options=marketing_options_dict
                 )
                 response = {
                     "prompt": result["prompt"],
@@ -103,7 +134,8 @@ async def process_query(request: QueryRequest):
                     query=request.query, 
                     image_query=request.image_query,
                     k_text=request.k_text, 
-                    k_images=request.k_images
+                    k_images=request.k_images,
+                    marketing_options=marketing_options_dict
                 )
                 response = {
                     "prompt": raw_response["prompt"],
@@ -116,7 +148,8 @@ async def process_query(request: QueryRequest):
                 query=request.query, 
                 image_query=request.image_query,
                 k_text=request.k_text, 
-                k_images=request.k_images
+                k_images=request.k_images,
+                marketing_options=marketing_options_dict
             )
             response = {
                 "prompt": raw_response["prompt"],
@@ -133,43 +166,63 @@ async def process_query(request: QueryRequest):
                 image_results = [process_scored_point(img) for img in response.get("image_results", [])]
                 has_images = request.include_image_data and any("base64_data" in img for img in image_results)
                 
+                # Add marketing specific information to the request payload
+                llm_additional_params = {}
+                if is_marketing:
+                    llm_additional_params = {
+                        "marketing": True,
+                        "platform": request.marketing_options.platform,
+                        "target_audience": request.marketing_options.target_audience,
+                        "tone": request.marketing_options.tone,
+                        "format": request.marketing_options.format,
+                        "content_length": request.marketing_options.content_length
+                    }
+                
                 if has_images and request.use_llava:
                     if "best_image" in result and result["best_image"] and "base64_data" in result["best_image"]:
                         llm_payload = {
                             "prompt": request.query,
                             "image_data": result["best_image"]["base64_data"],
-                            "context": response["context"]
+                            "context": response["context"],
+                            **llm_additional_params
                         }
                         llm_response = requests.post(
                             f"{LLM_SERVICE_URL}{IMAGE_ENDPOINT}",
                             json=llm_payload,
-                            timeout=60
+                            timeout=200
                         )
                     else:
                         llm_payload = {
                             "prompt": request.query,
-                            "context": response["context"]
+                            "context": response["context"],
+                            **llm_additional_params
                         }
                         llm_response = requests.post(
                             f"{LLM_SERVICE_URL}{TEXT_ENDPOINT}",
                             json=llm_payload,
-                            timeout=30
+                            timeout=200
                         )
                 else:
                     llm_payload = {
                         "prompt": request.query,
-                        "context": response["context"]
+                        "context": response["context"],
+                        **llm_additional_params
                     }
                     llm_response = requests.post(
                         f"{LLM_SERVICE_URL}{TEXT_ENDPOINT}",
                         json=llm_payload,
-                        timeout=30
+                        timeout=200
                     )
                 
                 if llm_response.status_code == 200:
                     llm_result = llm_response.json()
                     response["answer"] = llm_result.get("answer", "No response generated.")
-                    logger.info("Generated answer using LLM service")
+                    
+                    # If marketing content was generated, include it in a structured format
+                    if is_marketing and "formatted_content" in llm_result:
+                        response["marketing_content"] = llm_result.get("formatted_content")
+                    
+                    logger.info(f"Generated {'marketing' if is_marketing else 'standard'} answer using LLM service")
                 else:
                     logger.error(f"Error from LLM service: {llm_response.status_code} - {llm_response.text}")
             except Exception as e:
@@ -184,11 +237,40 @@ async def process_query(request: QueryRequest):
         logger.error(f"Error processing request: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
+@app.post("/marketing", response_model=QueryResponse)
+async def generate_marketing_content(request: QueryRequest):
+    """
+    Specialized endpoint for generating marketing content.
+    Automatically sets marketing options if not provided.
+    """
+    # Ensure marketing options are set
+    if not request.marketing_options:
+        request.marketing_options = MarketingOptions(enabled=True)
+    else:
+        request.marketing_options.enabled = True
+    
+    # Process the query with marketing options enabled
+    return await process_query(request)
+
 @app.post("/process_query")
 async def legacy_process_query(request: Request):
     """Legacy endpoint for backward compatibility"""
     try:
         data = await request.json()
+        
+        # Extract marketing options if present
+        marketing_options = None
+        if "marketing_options" in data and data["marketing_options"]:
+            marketing_opts = data["marketing_options"]
+            marketing_options = MarketingOptions(
+                enabled=marketing_opts.get("enabled", False),
+                platform=marketing_opts.get("platform", "social media"),
+                target_audience=marketing_opts.get("target_audience", "general audience"),
+                tone=marketing_opts.get("tone", "professional"),
+                format=marketing_opts.get("format", "social media post"),
+                content_length=marketing_opts.get("content_length", "medium")
+            )
+        
         query_request = QueryRequest(
             query=data.get("query", ""),
             image_query=data.get("image_query"),
@@ -196,7 +278,8 @@ async def legacy_process_query(request: Request):
             k_images=data.get("k_images", 3),
             include_image_data=data.get("include_image_data", False),
             generate_answer=data.get("generate_answer", False),
-            use_llava=data.get("use_llava", True)
+            use_llava=data.get("use_llava", True),
+            marketing_options=marketing_options
         )
         return await process_query(query_request)
     
@@ -206,4 +289,4 @@ async def legacy_process_query(request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000,timeout_keep_alive=200)
